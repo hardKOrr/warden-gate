@@ -10,6 +10,19 @@ if [ ! -f "$DIR/.env.local" ]; then
     exit 1
 fi
 
+# MCP hosts spawn this script directly, not through an interactive login
+# shell, so ~/.bashrc's nvm init never runs and plain `node` on PATH may
+# resolve to an older system install. Requires Node ~22 (see .nvmrc /
+# package.json engines); prefer nvm's copy when present, otherwise fall back
+# to whatever `node` already resolves to (e.g. a machine with a system Node
+# 22 and no nvm at all).
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck source=/dev/null
+    . "$NVM_DIR/nvm.sh"
+    nvm use 22 >/dev/null 2>&1 || true
+fi
+
 set -a
 # shellcheck source=/dev/null
 . "$DIR/.env.local"
