@@ -4,7 +4,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { BwSessionPool } from '../bw/bwPool.js';
 import { readBwEnv } from '../bw/bwSession.js';
-import { loadToolsConfig, resolveToolsConfigPath } from '../config/toolsConfig.js';
+import {
+  loadToolsConfig,
+  resolveToolsConfigPath,
+} from '../config/toolsConfig.js';
 import { KeychainSdk } from '../sdk/keychainSdk.js';
 import { registerScopedTools } from '../tools/registerScopedTools.js';
 import { SERVER_VERSION } from '../version.js';

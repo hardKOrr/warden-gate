@@ -79,11 +79,7 @@ export const mintProxmoxToken: MintHandler = async ({ sdk, itemId }) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
         res.on('end', () => {
-          if (
-            res.statusCode &&
-            res.statusCode >= 200 &&
-            res.statusCode < 300
-          ) {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
             resolve(Buffer.concat(chunks).toString('utf8'));
           } else {
             reject(

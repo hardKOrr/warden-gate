@@ -122,7 +122,9 @@ function registerOne(
         } else {
           const handler = handlers[entry.mode];
           if (!handler) {
-            throw new Error(`No mint handler registered for mode "${entry.mode}"`);
+            throw new Error(
+              `No mint handler registered for mode "${entry.mode}"`,
+            );
           }
           value = await handler({ sdk, itemId: entry.item });
         }
@@ -135,10 +137,13 @@ function registerOne(
         };
       } catch (error) {
         auditLog(name, 'failure', Date.now() - start);
-        const message = error instanceof Error ? error.message : 'unknown error';
+        const message =
+          error instanceof Error ? error.message : 'unknown error';
         return {
           structuredContent: { value: null },
-          content: [{ type: 'text' as const, text: `${name} failed: ${message}` }],
+          content: [
+            { type: 'text' as const, text: `${name} failed: ${message}` },
+          ],
           isError: true,
         };
       }
