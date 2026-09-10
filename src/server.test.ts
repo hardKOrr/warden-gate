@@ -211,7 +211,7 @@ if echo "$*" | grep -q 'unlock'; then
   exit 0
 fi
 if echo "$*" | grep -q 'get item'; then
-  printf '%s' '{"login":{"password":"warm-password"}}'
+  printf '%s' '{"fields":[{"name":"api_token_secret","value":"warm-password"}]}'
   exit 0
 fi
 printf '%s' '{}'
@@ -257,7 +257,7 @@ exit 0
     );
 
     const result = await client.callTool(
-      { name: 'get_rundeck_credential', arguments: {} },
+      { name: 'get_proxmox_api_token', arguments: {} },
       undefined,
       { timeout: 30_000 },
     );

@@ -2,31 +2,49 @@
 #
 # Each entry under `tools:` becomes exactly one MCP tool name. Nothing else is
 # reachable through this server — there is no generic "fetch any vault item"
-# tool. Item ids and field names below are not secrets; only the values they
-# point to inside Vaultwarden are. Rotating a credential means changing the
-# item in Vaultwarden — this file never needs to change for a rotation.
+# tool. Rotating a credential means changing the item in Vaultwarden — this
+# file never needs to change for a rotation.
+#
+# `item` is the item's exact Vaultwarden NAME (e.g. "homelab-infra/proxmox"),
+# not its id/UUID. This matches homelab-infra's own convention
+# (ansible/tasks/bitwarden/upsert-item.yml resolves items the same way via
+# `bw list items --search <name>` filtered to an exact name match) and keeps
+# this file portable: an item can be deleted and recreated without editing
+# tools.yaml, as long as the name stays the same. Resolution happens through
+# `bw get item <name>`, which bw itself resolves fuzzily and rejects with
+# "More than one result was found" if the name is ambiguous — so an
+# accidental duplicate name fails loudly instead of silently picking one.
+#
+# `item` and `field` names are not secrets; only the values they point to
+# inside Vaultwarden are.
 #
 # mode: raw_field
-#   Returns one named field from one named vault item, verbatim. Last resort:
-#   use this only when the target system has no way to mint a short-lived or
-#   scoped credential of its own.
-#   Required: item, field (one of: password, username, notes, uri, or any
-#   custom field name defined on the item).
+#   Returns one named field from one named vault item, verbatim. Use this
+#   when the stored value is already a scoped, purpose-limited credential in
+#   its own right (e.g. a Proxmox API token created with restricted
+#   permissions, as opposed to a root account password) — there's nothing
+#   left to "mint" in that case. `field` may be `password`, `username`,
+#   `notes`, `uri`, or (as with every credential below, which homelab-infra
+#   stores as secure-note items with custom fields) any custom field name
+#   defined on the item.
 #
 # mode: mint_<something>
 #   Fetches the root credential from `item` internally (never returned to the
 #   caller) and exchanges it for a short-lived, scoped credential by calling
-#   the target system's own API. Add a new mode by adding one file under
+#   the target system's own API. Use this only when the stored credential is
+#   NOT already scoped (e.g. a root username/password with no independent
+#   permission system of its own). Add a new mode by adding one file under
 #   src/tools/mintHandlers/ and registering it in
-#   src/tools/mintHandlers/index.ts.
-#   Required: item. The handler decides what else it needs from that item.
+#   src/tools/mintHandlers/index.ts. See src/tools/mintHandlers/proxmoxToken.ts
+#   for a worked (currently unused) example of this pattern.
 
 tools:
-  get_rundeck_credential:
-    item: rundeck-service-account
-    mode: raw_field
-    field: password
-
   get_proxmox_api_token:
-    item: proxmox-automation-root
-    mode: mint_proxmox_token
+    item: homelab-infra/proxmox
+    mode: raw_field
+    field: api_token_secret
+
+  get_runner_ssh_key:
+    item: homelab-infra/runner
+    mode: raw_field
+    field: ssh_private_key

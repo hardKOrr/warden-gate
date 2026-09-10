@@ -21,8 +21,11 @@ generic get-item tool is one prompt away from reading anything in the vault.
 registers **exactly** the tool names declared there — nothing else. Each tool
 is pre-scoped to one Vaultwarden item by config, not by caller input:
 
-- `raw_field` mode returns one named field (e.g. `password`) from one named
-  item — last resort, for targets with no way to mint a scoped credential.
+- `raw_field` mode returns one named field (e.g. `password`, or a custom
+  field like `api_token_secret`) from one named item — appropriate either as
+  a last resort for targets with no way to mint a scoped credential, or when
+  the stored value is already a scoped, purpose-limited credential in its own
+  right (e.g. a Proxmox API token created with restricted permissions).
 - `mint_*` mode fetches a root credential from Vaultwarden internally, never
   returns it, and exchanges it for a short-lived/scoped credential by calling
   the target system's own API (see `src/tools/mintHandlers/`).
@@ -117,7 +120,7 @@ tool argument, and never written to a file.
 | `BW_UNLOCK_INTERVAL` | `300` | seconds between vault unlocks |
 | `TOOLS_CONFIG_PATH` | `./tools.yaml` | path to the scoped tool config |
 | `KEYCHAIN_BW_HOME_ROOT` | `${HOME}/bw-profiles` | root for per-profile `bw` state |
-| `PROXMOX_TLS_INSECURE` | `false` | skip TLS verification in `mint_proxmox_token` for a self-signed homelab cert |
+| `PROXMOX_TLS_INSECURE` | `false` | skip TLS verification in the `mint_proxmox_token` handler (`src/tools/mintHandlers/proxmoxToken.ts`) for a self-signed homelab cert — only relevant if a `mint_proxmox_token` tool is declared in `tools.yaml`; the shipped config uses `raw_field` for Proxmox instead, since this deployment already stores a pre-scoped Proxmox API token rather than a root credential |
 
 `READONLY`, `NOREVEAL`, `TOOL_PREFIX`, `TOOL_SEPARATOR`, and
 `KEYCHAIN_TEXT_COMPAT_MODE` from upstream `warden-mcp` no longer apply — there
