@@ -135,10 +135,11 @@ The script:
 2. configures only one local MCP server (`warden`)
 3. calls a configured lookup term against one `tools.yaml` tool
 
-**Known gap:** this script and `src/integration/mcp.e2e.integration.test.ts`
-still call pre-fork `keychain_*` tool names and need updating to whatever
-`tools.yaml` declares before they'll pass again; both require live
-Vaultwarden/Docker to verify and were not exercised while building this fork.
+**Known gap (pre-existing, not introduced by this fork):** `scripts/opencode-isolated-warden-smoke.mjs`
+is documented but was never committed, in this fork or upstream — the doc
+predates the script or the script was removed without updating the doc.
+Recreate it against current `tools.yaml` tool names if you need this smoke
+path; don't assume it exists.
 
 ## Expectations
 

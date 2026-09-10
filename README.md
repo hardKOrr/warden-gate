@@ -158,10 +158,13 @@ from `tools.yaml`.
 | `npm run test` | build, then run all compiled tests |
 | `npm run test:integration` | build, then run compose-backed integration tests (requires Docker + local Vaultwarden; not exercised while building this fork) |
 
-`src/integration/mcp.e2e.integration.test.ts` still calls the old
-`keychain_*` generic tool names inherited from upstream and needs a rewrite
-against `tools.yaml`-driven tool names before it will pass — tracked as known
-follow-up, since exercising it requires the compose-backed Vaultwarden stack.
+`src/integration/mcp.e2e.integration.test.ts` covers the scoped-tool contract:
+a schema-only test (no live Vaultwarden needed, runs as part of `npm test`)
+asserts exactly the tools declared in a test `tools.yaml` are registered with
+the `{value}` output shape, and a `BW_HOST`-gated test seeds a real item and
+calls `get_rundeck_credential` end-to-end. The `BW_HOST`-gated test was
+written against this design but not executed against a live Vaultwarden while
+building this fork — verify it once real credentials are available.
 
 ## Compatibility
 

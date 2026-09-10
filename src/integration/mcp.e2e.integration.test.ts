@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -7,68 +7,53 @@ import test from 'node:test';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
+import { BwSessionPool } from '../bw/bwPool.js';
+import { KeychainSdk } from '../sdk/keychainSdk.js';
 import { createKeychainApp } from '../transports/http.js';
 
-const INITIAL_STATUS_TIMEOUT_MS = 120_000;
-const TOOL_PREFIX = 'keychain';
-const TOOL_SEPARATOR = '_';
-const AUTH_SMOKE_PROFILE = 'auth-smoke';
+// This suite covers the scoped-tool contract (tools.yaml -> exactly those MCP
+// tool names, with the {value: string|null} output shape). It intentionally
+// does not re-exercise the old generic vault-proxy surface (search/get-item/
+// CRUD/orgs/attachments/Sends) — that surface no longer exists in this fork.
+// The mint_* handler dispatch itself is unit-tested (with a mocked sdk) in
+// registerScopedTools.test.ts; this file only covers raw_field end-to-end
+// against a real Vaultwarden, since that's the path with real bw CLI/session
+// behavior worth exercising live.
 
-function toolName(name: string) {
-  return `${TOOL_PREFIX}${TOOL_SEPARATOR}${name}`;
+async function writeTempToolsConfig(entries: string): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'warden-gate-toolsconfig-'));
+  const path = join(dir, 'tools.yaml');
+  await writeFile(path, entries, 'utf8');
+  return path;
 }
 
-const SIMPLE_OUTPUT_SCHEMA_TOOLS = [
-  'status',
-  'sdk_version',
-  'encode',
-  'generate',
-  'generate_username',
-  'get_username',
-  'get_password',
-  'get_totp',
-  'get_notes',
-  'get_password_history',
-  'get_uri',
-  'get_exposed',
-] as const;
-
-function assertReadyStatus(status: unknown) {
-  assert.ok(status && typeof status === 'object');
-  const rec = status as {
-    operational?: unknown;
-    summary?: unknown;
-    status?: unknown;
-  };
-  assert.ok(
-    rec.status === 'unlocked' ||
-      rec.status === 'locked' ||
-      rec.status === 'unauthenticated',
-  );
-  assert.ok(rec.operational && typeof rec.operational === 'object');
-  assert.equal((rec.operational as { ready?: unknown }).ready, true);
-  assert.ok(
-    typeof rec.summary === 'string' &&
-      rec.summary.toLowerCase().includes('vault access ready'),
-  );
-}
-
-function isAuthSmokeProfile() {
-  return process.env.KEYCHAIN_INTEGRATION_PROFILE === AUTH_SMOKE_PROFILE;
-}
-
-async function ignoreCleanupError(label: string, operation: Promise<unknown>) {
+async function ignoreCleanupError(operation: Promise<unknown>) {
   try {
     await operation;
-  } catch (error) {
-    void label;
-    void error;
+  } catch {
+    // best-effort cleanup only
   }
 }
 
-test('mcp e2e: advertises simple helper output schemas over /sse', async () => {
-  const bwHomeRoot = await mkdtemp(join(tmpdir(), 'keychain-mcp-schema-'));
-  const app = createKeychainApp({ bwHomeRoot });
+test('mcp e2e: registers exactly the configured scoped tools with the value output schema', async () => {
+  const bwHomeRoot = await mkdtemp(join(tmpdir(), 'warden-gate-schema-'));
+  const toolsConfigPath = await writeTempToolsConfig(
+    'tools:\n  get_rundeck_credential:\n    item: rundeck-service-account\n    mode: raw_field\n    field: password\n',
+  );
+  const previousToolsConfigPath = process.env.TOOLS_CONFIG_PATH;
+  process.env.TOOLS_CONFIG_PATH = toolsConfigPath;
+
+  let app: ReturnType<typeof createKeychainApp>;
+  try {
+    app = createKeychainApp({ bwHomeRoot });
+  } finally {
+    if (previousToolsConfigPath === undefined) {
+      delete process.env.TOOLS_CONFIG_PATH;
+    } else {
+      process.env.TOOLS_CONFIG_PATH = previousToolsConfigPath;
+    }
+  }
+
   const httpServer = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => httpServer.once('listening', resolve));
 
@@ -82,7 +67,7 @@ test('mcp e2e: advertises simple helper output schemas over /sse', async () => {
   const url = new URL(`http://127.0.0.1:${addr.port}/sse`);
   const transport = new StreamableHTTPClientTransport(url);
   const client = new Client(
-    { name: 'keychain-mcp-schema-test', version: '0.0.0' },
+    { name: 'warden-gate-schema-test', version: '0.0.0' },
     { capabilities: {} },
   );
 
@@ -90,40 +75,35 @@ test('mcp e2e: advertises simple helper output schemas over /sse', async () => {
     await client.connect(transport);
     const tools = await client.listTools();
 
-    for (const name of SIMPLE_OUTPUT_SCHEMA_TOOLS) {
-      const tool = tools.tools.find(
-        (candidate) => candidate.name === toolName(name),
-      );
-      assert.ok(tool, `${toolName(name)} should be registered`);
-      assert.ok(
-        tool.outputSchema && typeof tool.outputSchema === 'object',
-        `${toolName(name)} should advertise an output schema`,
-      );
-      assert.equal(tool.outputSchema.type, 'object');
-      assert.ok(
-        tool.outputSchema.properties &&
-          typeof tool.outputSchema.properties === 'object',
-        `${toolName(name)} should expose output schema properties`,
-      );
-    }
-  } finally {
-    await ignoreCleanupError(
-      'terminate schema test session',
-      transport.terminateSession(),
+    assert.equal(
+      tools.tools.length,
+      1,
+      'only the tools declared in tools.yaml should be registered',
     );
-    await ignoreCleanupError('close schema test transport', transport.close());
+    const tool = tools.tools.find((t) => t.name === 'get_rundeck_credential');
+    assert.ok(tool, 'get_rundeck_credential should be registered');
+    assert.ok(
+      tool.outputSchema && typeof tool.outputSchema === 'object',
+      'get_rundeck_credential should advertise an output schema',
+    );
+    assert.equal(tool.outputSchema.type, 'object');
+    assert.ok(
+      tool.outputSchema.properties &&
+        typeof tool.outputSchema.properties === 'object' &&
+        'value' in tool.outputSchema.properties,
+      'output schema should expose a "value" property and nothing item-shaped',
+    );
+  } finally {
+    await ignoreCleanupError(transport.terminateSession());
+    await ignoreCleanupError(transport.close());
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
     await rm(bwHomeRoot, { recursive: true, force: true });
   }
 });
 
-test('mcp e2e: can initialize, list tools, and call keychain_status over /sse', {
+test('mcp e2e: get_rundeck_credential returns the configured item field over /sse', {
   timeout: 180_000,
 }, async (t) => {
-  const requireOrgTests = /^true$/i.test(
-    process.env.KEYCHAIN_REQUIRE_ORG_TESTS ?? '',
-  );
-  const authSmokeProfile = isAuthSmokeProfile();
   const bwHost = process.env.BW_HOST;
   const bwPassword = process.env.BW_PASSWORD;
   const bwUser = process.env.BW_USER ?? process.env.BW_USERNAME;
@@ -138,11 +118,49 @@ test('mcp e2e: can initialize, list tools, and call keychain_status over /sse', 
     return;
   }
 
-  const bwHomeRoot = await mkdtemp(join(tmpdir(), 'keychain-mcp-e2e-'));
-  const app = createKeychainApp({ bwHomeRoot });
+  const bwHomeRoot = await mkdtemp(join(tmpdir(), 'warden-gate-e2e-'));
+  const bwEnv = {
+    host: bwHost,
+    password: bwPassword,
+    clientId: bwClientId,
+    clientSecret: bwClientSecret,
+    user: bwUser,
+  };
+
+  // Seed a real test item directly through the sdk, bypassing MCP — this
+  // test's job is to prove the tool retrieves what's actually in the vault,
+  // not to prove item creation (which the sdk's own unit tests cover).
+  const seedPool = new BwSessionPool({ rootDir: bwHomeRoot });
+  const seedBw = await seedPool.getOrCreate(bwEnv);
+  const seedSdk = new KeychainSdk(seedBw);
+  const testPassword = `warden-gate-e2e-${Date.now()}`;
+  const created = (await seedSdk.createLogin({
+    name: `warden-gate-e2e-${Date.now()}`,
+    username: 'rundeck-automation',
+    password: testPassword,
+  })) as { id?: unknown };
+  const itemId = typeof created.id === 'string' ? created.id : undefined;
+  assert.ok(itemId, 'seed item should be created with an id');
+
+  const toolsConfigPath = await writeTempToolsConfig(
+    `tools:\n  get_rundeck_credential:\n    item: ${itemId}\n    mode: raw_field\n    field: password\n`,
+  );
+  const previousToolsConfigPath = process.env.TOOLS_CONFIG_PATH;
+  process.env.TOOLS_CONFIG_PATH = toolsConfigPath;
+
+  let app: ReturnType<typeof createKeychainApp>;
+  try {
+    app = createKeychainApp({ bwHomeRoot });
+  } finally {
+    if (previousToolsConfigPath === undefined) {
+      delete process.env.TOOLS_CONFIG_PATH;
+    } else {
+      process.env.TOOLS_CONFIG_PATH = previousToolsConfigPath;
+    }
+  }
+
   const httpServer = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => httpServer.once('listening', resolve));
-
   const addr = httpServer.address();
   if (!addr || typeof addr === 'string') {
     await rm(bwHomeRoot, { recursive: true, force: true });
@@ -156,623 +174,37 @@ test('mcp e2e: can initialize, list tools, and call keychain_status over /sse', 
       headers: {
         'X-BW-Host': bwHost,
         'X-BW-Password': bwPassword,
-        ...(hasUserPass ? { 'X-BW-User': bwUser } : {}),
+        ...(hasUserPass ? { 'X-BW-User': String(bwUser) } : {}),
         ...(hasApiKey
           ? {
-              'X-BW-ClientId': bwClientId,
-              'X-BW-ClientSecret': bwClientSecret,
+              'X-BW-ClientId': String(bwClientId),
+              'X-BW-ClientSecret': String(bwClientSecret),
             }
           : {}),
       },
     },
   });
-
   const client = new Client(
-    { name: 'keychain-mcp-e2e', version: '0.0.0' },
+    { name: 'warden-gate-e2e', version: '0.0.0' },
     { capabilities: {} },
   );
-  let createdLoginId = '';
 
   try {
     await client.connect(transport);
-
-    const tools = await client.listTools();
-    const names = tools.tools.map((x) => x.name);
-    assert.ok(names.includes(toolName('status')));
-    assert.ok(names.includes(toolName('encode')));
-    assert.ok(names.includes(toolName('generate')));
-    assert.ok(names.includes(toolName('generate_username')));
-    assert.ok(names.includes(toolName('list_folders')));
-    assert.ok(names.includes(toolName('create_folder')));
-    assert.ok(names.includes(toolName('edit_folder')));
-    assert.ok(names.includes(toolName('delete_folder')));
-    assert.ok(names.includes(toolName('list_organizations')));
-    assert.ok(names.includes(toolName('list_collections')));
-    assert.ok(names.includes(toolName('list_org_collections')));
-    assert.ok(names.includes(toolName('create_org_collection')));
-    assert.ok(names.includes(toolName('edit_org_collection')));
-    assert.ok(names.includes(toolName('delete_org_collection')));
-    assert.ok(names.includes(toolName('move_item_to_organization')));
-    assert.ok(names.includes(toolName('search_items')));
-    assert.ok(names.includes(toolName('get_item')));
-    assert.ok(names.includes(toolName('get_uri')));
-    assert.ok(names.includes(toolName('get_notes')));
-    assert.ok(names.includes(toolName('get_exposed')));
-    assert.ok(names.includes(toolName('get_folder')));
-    assert.ok(names.includes(toolName('get_collection')));
-    assert.ok(names.includes(toolName('get_organization')));
-    assert.ok(names.includes(toolName('get_org_collection')));
-    assert.ok(names.includes(toolName('delete_item')));
-    assert.ok(names.includes(toolName('delete_items')));
-    assert.ok(names.includes(toolName('restore_item')));
-    assert.ok(names.includes(toolName('create_attachment')));
-    assert.ok(names.includes(toolName('delete_attachment')));
-    assert.ok(names.includes(toolName('get_attachment')));
-    assert.ok(names.includes(toolName('send_list')));
-    assert.ok(names.includes(toolName('send_template')));
-    assert.ok(names.includes(toolName('send_get')));
-    assert.ok(names.includes(toolName('send_create')));
-    assert.ok(names.includes(toolName('send_create_encoded')));
-    assert.ok(names.includes(toolName('send_remove_password')));
-    assert.ok(names.includes(toolName('send_edit')));
-    assert.ok(names.includes(toolName('send_delete')));
-    assert.ok(names.includes(toolName('receive')));
-    assert.ok(names.includes(toolName('get_username')));
-    assert.ok(names.includes(toolName('get_password')));
-    assert.ok(names.includes(toolName('get_totp')));
-    assert.ok(names.includes(toolName('get_password_history')));
-    assert.ok(names.includes(toolName('create_note')));
-    assert.ok(names.includes(toolName('create_login')));
-    assert.ok(names.includes(toolName('create_logins')));
-    assert.ok(names.includes(toolName('set_login_uris')));
-    assert.ok(names.includes(toolName('create_ssh_key')));
-    assert.ok(names.includes(toolName('create_card')));
-    assert.ok(names.includes(toolName('create_identity')));
-    assert.ok(names.includes(toolName('update_item')));
-
-    const res = await client.callTool(
-      {
-        name: toolName('status'),
-        arguments: {},
-      },
-      undefined,
-      { timeout: INITIAL_STATUS_TIMEOUT_MS },
-    );
-    assert.equal(res.isError, undefined);
-    assert.ok(
-      res.structuredContent && typeof res.structuredContent === 'object',
-    );
-    assert.ok(
-      'status' in res.structuredContent &&
-        typeof (res.structuredContent as { status?: unknown }).status ===
-          'object',
-    );
-    {
-      const status = (res.structuredContent as { status?: unknown }).status;
-      assert.ok(status && typeof status === 'object');
-      const rec = status as {
-        operational?: unknown;
-        summary?: unknown;
-        status?: unknown;
-      };
-      assert.ok(
-        rec.status === 'unlocked' ||
-          rec.status === 'locked' ||
-          rec.status === 'unauthenticated',
-      );
-      assert.ok(rec.operational && typeof rec.operational === 'object');
-      const ready = (rec.operational as { ready?: unknown }).ready;
-      if (rec.status === 'unlocked') {
-        assert.equal(ready, true);
-        assert.ok(
-          typeof rec.summary === 'string' &&
-            rec.summary.toLowerCase().includes('vault access ready'),
-        );
-      } else {
-        assert.equal(ready, false);
-        assert.equal(
-          (rec.operational as { recoverable?: unknown }).recoverable,
-          true,
-        );
-        assert.ok(
-          typeof rec.summary === 'string' &&
-            rec.summary.toLowerCase().includes('vault access not ready yet') &&
-            rec.summary.toLowerCase().includes('on demand'),
-        );
-      }
-    }
-    assert.ok(Array.isArray(res.content));
-    if (
-      (res.structuredContent as { status?: { status?: string } }).status
-        ?.status === 'unlocked'
-    ) {
-      assert.ok(
-        res.content.some((item) => {
-          if (item?.type !== 'text') return false;
-          return item.text.toLowerCase().includes('vault access ready');
-        }),
-      );
-    } else {
-      assert.ok(
-        res.content.some((item) => {
-          if (item?.type !== 'text') return false;
-          const text = item.text.toLowerCase();
-          return (
-            text.includes('vault access not ready yet') &&
-            text.includes('on demand')
-          );
-        }),
-      );
-    }
-
-    if (authSmokeProfile) {
-      const listFolders = await client.callTool({
-        name: toolName('list_folders'),
-        arguments: { limit: 1 },
-      });
-      assert.equal(listFolders.isError, undefined);
-      assert.ok(
-        listFolders.structuredContent &&
-          typeof listFolders.structuredContent === 'object',
-      );
-      assert.ok(
-        Array.isArray(
-          (listFolders.structuredContent as { results?: unknown }).results,
-        ),
-      );
-
-      const readyAfterList = await client.callTool(
-        {
-          name: toolName('status'),
-          arguments: {},
-        },
-        undefined,
-        { timeout: INITIAL_STATUS_TIMEOUT_MS },
-      );
-      assert.equal(readyAfterList.isError, undefined);
-      assertReadyStatus(
-        (readyAfterList.structuredContent as { status?: unknown }).status,
-      );
-      return;
-    }
-
-    const enc = await client.callTool({
-      name: toolName('encode'),
-      arguments: { value: '{"x":1}' },
-    });
-    assert.equal(enc.isError, undefined);
-    assert.ok(
-      enc.structuredContent && typeof enc.structuredContent === 'object',
-    );
-    assert.ok('encoded' in enc.structuredContent);
-
-    const genNoReveal = await client.callTool({
-      name: toolName('generate'),
+    const result = await client.callTool({
+      name: 'get_rundeck_credential',
       arguments: {},
     });
-    assert.equal(genNoReveal.isError, undefined);
-    assert.ok(
-      genNoReveal.structuredContent &&
-        typeof genNoReveal.structuredContent === 'object',
-    );
-    {
-      const result = (genNoReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'generated');
-      assert.equal(rec.revealed, false);
-      assert.equal(rec.value, null);
-    }
-
-    const genUserNoReveal = await client.callTool({
-      name: toolName('generate_username'),
-      arguments: { type: 'random_word' },
-    });
-    assert.equal(genUserNoReveal.isError, undefined);
-    assert.ok(
-      genUserNoReveal.structuredContent &&
-        typeof genUserNoReveal.structuredContent === 'object',
-    );
-    {
-      const result = (genUserNoReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'generated');
-      assert.equal(rec.revealed, false);
-      assert.equal(rec.value, null);
-    }
-
-    const createLogin = await client.callTool({
-      name: toolName('create_login'),
-      arguments: {
-        name: `keychain-e2e-login-${Date.now()}`,
-        username: 'e2e',
-        password: 'e2e-password-test-only',
-        totp: 'JBSWY3DPEHPK3PXP',
-        notes: 'e2e-notes',
-        fields: [
-          { name: 'visible', value: 'v', hidden: false },
-          { name: 'hidden', value: 'h', hidden: true },
-        ],
-        attachments: [
-          {
-            filename: 'e2e.txt',
-            contentBase64: Buffer.from('hello', 'utf8').toString('base64'),
-          },
-        ],
-      },
-    });
-
-    assert.equal(createLogin.isError, undefined);
-    const sc = createLogin.structuredContent;
-    const created =
-      sc && typeof sc === 'object' && 'item' in sc
-        ? (sc as { item?: unknown }).item
-        : undefined;
-    assert.ok(created && typeof created === 'object');
-    const createdRec = created as Record<string, unknown>;
-    if (typeof createdRec.id === 'string') createdLoginId = createdRec.id;
-    const login = createdRec.login as Record<string, unknown> | undefined;
-    assert.equal(login?.password, '[REDACTED]');
-    assert.equal(login?.totp, '[REDACTED]');
-
-    const fields = createdRec.fields;
-    assert.ok(Array.isArray(fields));
-    // Hidden custom fields should be redacted.
-    const hiddenField = fields.find((f) => {
-      if (!f || typeof f !== 'object') return false;
-      return (f as Record<string, unknown>).name === 'hidden';
-    });
-    assert.ok(hiddenField && typeof hiddenField === 'object');
-    assert.equal((hiddenField as Record<string, unknown>).value, '[REDACTED]');
-
-    const attachments = createdRec.attachments;
-    assert.ok(Array.isArray(attachments));
-    assert.ok(attachments.length >= 1);
-    const a0 = attachments[0];
-    let attachmentId = '';
-    if (a0 && typeof a0 === 'object') {
-      const id = (a0 as Record<string, unknown>).id;
-      if (typeof id === 'string') attachmentId = id;
-      const url = (a0 as Record<string, unknown>).url;
-      if (typeof url === 'string') assert.equal(url, '[REDACTED]');
-    }
-    assert.ok(attachmentId.length > 0);
-
-    const downloadedAttachment = await client.callTool({
-      name: toolName('get_attachment'),
-      arguments: { itemId: createdLoginId, attachmentId },
-    });
-    assert.equal(downloadedAttachment.isError, undefined);
-    const downloaded = (
-      downloadedAttachment.structuredContent as { attachment?: unknown }
-    ).attachment;
-    assert.ok(downloaded && typeof downloaded === 'object');
-    const downloadedRec = downloaded as Record<string, unknown>;
-    assert.equal(downloadedRec.filename, 'e2e.txt');
-    assert.equal(downloadedRec.bytes, 5);
-    assert.equal(
-      Buffer.from(String(downloadedRec.contentBase64), 'base64').toString(
-        'utf8',
-      ),
-      'hello',
-    );
-
-    // Secret helper tools: they must return a consistent shape and not leak values by default.
-    const term = createdRec.name as string;
-
-    const readyBeforeLookup = await client.callTool(
-      {
-        name: 'keychain_status',
-        arguments: {},
-      },
-      undefined,
-      { timeout: INITIAL_STATUS_TIMEOUT_MS },
-    );
-    assert.equal(readyBeforeLookup.isError, undefined);
-    assertReadyStatus(
-      (readyBeforeLookup.structuredContent as { status?: unknown }).status,
-    );
-
-    const searchLogin = await client.callTool({
-      name: 'keychain_search_items',
-      arguments: { text: term, type: 'login', limit: 50 },
-    });
-    assert.equal(searchLogin.isError, undefined);
-    {
-      const results = (searchLogin.structuredContent as { results?: unknown })
-        .results;
-      assert.ok(Array.isArray(results));
-      assert.ok(
-        results.some(
-          (item) =>
-            item &&
-            typeof item === 'object' &&
-            (item as { id?: unknown }).id === createdRec.id,
-        ),
-        'search_items should find the created login by the same term used by get_username',
-      );
-    }
-
-    const username = await client.callTool({
-      name: 'keychain_get_username',
-      arguments: { term },
-    });
-    assert.equal(username.isError, undefined);
-    {
-      const result = (username.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'username');
-      assert.equal(rec.revealed, true);
-      assert.equal(rec.value, 'e2e');
-    }
-
-    const readyAfterLookup = await client.callTool(
-      {
-        name: 'keychain_status',
-        arguments: {},
-      },
-      undefined,
-      { timeout: INITIAL_STATUS_TIMEOUT_MS },
-    );
-    assert.equal(readyAfterLookup.isError, undefined);
-    assertReadyStatus(
-      (readyAfterLookup.structuredContent as { status?: unknown }).status,
-    );
-
-    const pwNoReveal = await client.callTool({
-      name: 'keychain_get_password',
-      arguments: { term },
-    });
-    assert.equal(pwNoReveal.isError, undefined);
-    {
-      const result = (pwNoReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'password');
-      assert.equal(rec.revealed, false);
-      assert.equal(rec.value, null);
-    }
-
-    const pwReveal = await client.callTool({
-      name: 'keychain_get_password',
-      arguments: { term, reveal: true },
-    });
-    assert.equal(pwReveal.isError, undefined);
-    {
-      const result = (pwReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'password');
-      assert.equal(rec.revealed, true);
-      assert.ok(typeof rec.value === 'string' && rec.value.length > 0);
-    }
-
-    const totpNoReveal = await client.callTool({
-      name: 'keychain_get_totp',
-      arguments: { term },
-    });
-    assert.equal(totpNoReveal.isError, undefined);
-    {
-      const result = (totpNoReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'totp');
-      assert.equal(rec.revealed, false);
-      assert.equal(rec.value, null);
-    }
-
-    const totpReveal = await client.callTool({
-      name: 'keychain_get_totp',
-      arguments: { term, reveal: true },
-    });
-    assert.equal(totpReveal.isError, undefined);
-    {
-      const result = (totpReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-        period?: unknown;
-        timeLeft?: unknown;
-      };
-      assert.equal(rec.kind, 'totp');
-      assert.equal(rec.revealed, true);
-      assert.ok(typeof rec.value === 'string' && rec.value.length >= 6);
-      assert.equal(rec.period, 30);
-      assert.ok(
-        typeof rec.timeLeft === 'number' &&
-          rec.timeLeft >= 1 &&
-          rec.timeLeft <= 30,
-      );
-    }
-
-    const listOrgs = await client.callTool({
-      name: 'keychain_list_organizations',
-      arguments: {},
-    });
-    assert.equal(listOrgs.isError, undefined);
-
-    const listOrgsPayload =
-      listOrgs.structuredContent &&
-      typeof listOrgs.structuredContent === 'object'
-        ? (listOrgs.structuredContent as { results?: unknown[] })
-        : { results: [] };
-    const orgs = Array.isArray(listOrgsPayload.results)
-      ? listOrgsPayload.results
-      : [];
-    const targetOrg = orgs.find((o): o is { id: string } => {
-      if (!o || typeof o !== 'object') return false;
-      return typeof (o as { id?: unknown }).id === 'string';
-    });
-
-    if (!targetOrg) {
-      if (requireOrgTests) {
-        assert.fail(
-          'No organizations found (expected org seed to have run, but list_organizations returned empty)',
-        );
-      }
-      console.log(
-        '[itest] no organizations found; skipping org collection assertions',
-      );
-    } else {
-      const organizationId = targetOrg.id;
-      const orgCollectionName = `keychain-e2e-org-${Date.now()}`;
-      let orgCollectionId = '';
-
-      try {
-        const createOrgCollection = await client.callTool({
-          name: 'keychain_create_org_collection',
-          arguments: {
-            organizationId,
-            name: orgCollectionName,
-          },
-        });
-        assert.equal(createOrgCollection.isError, undefined);
-
-        const created =
-          createOrgCollection.structuredContent &&
-          typeof createOrgCollection.structuredContent === 'object'
-            ? (
-                createOrgCollection.structuredContent as {
-                  collection?: unknown;
-                }
-              ).collection
-            : undefined;
-        assert.ok(created && typeof created === 'object');
-        orgCollectionId =
-          typeof (created as { id?: unknown }).id === 'string'
-            ? String((created as { id?: unknown }).id)
-            : '';
-        assert.equal(typeof (created as { name?: unknown }).name, 'string');
-        assert.equal((created as { name?: unknown }).name, orgCollectionName);
-        assert.equal(orgCollectionId.length > 0, true);
-
-        const editOrgCollection = await client.callTool({
-          name: 'keychain_edit_org_collection',
-          arguments: {
-            organizationId,
-            id: orgCollectionId,
-            name: `${orgCollectionName}-renamed`,
-          },
-        });
-        assert.equal(editOrgCollection.isError, undefined);
-        const edited =
-          editOrgCollection.structuredContent &&
-          typeof editOrgCollection.structuredContent === 'object'
-            ? (
-                editOrgCollection.structuredContent as {
-                  collection?: unknown;
-                }
-              ).collection
-            : undefined;
-        assert.ok(edited && typeof edited === 'object');
-        assert.equal(
-          (edited as { name?: unknown }).name,
-          `${orgCollectionName}-renamed`,
-        );
-      } finally {
-        if (orgCollectionId) {
-          await ignoreCleanupError(
-            'delete temporary org collection',
-            client.callTool({
-              name: 'keychain_delete_org_collection',
-              arguments: {
-                organizationId,
-                id: orgCollectionId,
-              },
-            }),
-          );
-        }
-      }
-    }
-
-    const notesNoReveal = await client.callTool({
-      name: 'keychain_get_notes',
-      arguments: { term },
-    });
-    assert.equal(notesNoReveal.isError, undefined);
-    {
-      const result = (notesNoReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'notes');
-      assert.equal(rec.revealed, false);
-      assert.equal(rec.value, null);
-    }
-
-    const notesReveal = await client.callTool({
-      name: 'keychain_get_notes',
-      arguments: { term, reveal: true },
-    });
-    assert.equal(notesReveal.isError, undefined);
-    {
-      const result = (notesReveal.structuredContent as { result?: unknown })
-        .result;
-      assert.ok(result && typeof result === 'object');
-      const rec = result as {
-        kind?: unknown;
-        value?: unknown;
-        revealed?: unknown;
-      };
-      assert.equal(rec.kind, 'notes');
-      assert.equal(rec.revealed, true);
-      assert.equal(rec.value, 'e2e-notes');
-    }
+    assert.equal(result.isError, undefined);
+    const structured = result.structuredContent as
+      | { value?: unknown }
+      | undefined;
+    assert.equal(structured?.value, testPassword);
   } finally {
-    if (typeof createdLoginId === 'string' && createdLoginId.length > 0) {
-      await ignoreCleanupError(
-        'delete temporary login item',
-        client.callTool({
-          name: toolName('delete_item'),
-          arguments: { id: createdLoginId, permanent: true },
-        }),
-      );
-    }
-    await ignoreCleanupError(
-      'terminate e2e session',
-      transport.terminateSession(),
-    );
-    await ignoreCleanupError('close e2e transport', transport.close());
+    await ignoreCleanupError(transport.terminateSession());
+    await ignoreCleanupError(transport.close());
     await new Promise<void>((resolve) => httpServer.close(() => resolve()));
+    await ignoreCleanupError(seedSdk.deleteItem({ id: itemId as string }));
     await rm(bwHomeRoot, { recursive: true, force: true });
   }
 });
