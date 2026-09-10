@@ -189,7 +189,7 @@ exit 0
   await rm(dir, { recursive: true, force: true });
 });
 
-test('stdio startup does not unlock before first tool call', {
+test('stdio startup does not unlock before the first tool call', {
   timeout: 15_000,
 }, async () => {
   const projectRoot = fileURLToPath(new URL('..', import.meta.url));
@@ -210,10 +210,10 @@ if echo "$*" | grep -q 'unlock'; then
   printf 'warm-session-token'
   exit 0
 fi
-    if echo "$*" | grep -q 'status'; then
-      printf '%s' '{"serverUrl":"https://example.test","userEmail":"user@example.test","status":"locked"}'
-      exit 0
-    fi
+if echo "$*" | grep -q 'get item'; then
+  printf '%s' '{"login":{"password":"warm-password"}}'
+  exit 0
+fi
 printf '%s' '{}'
 exit 0
 `,
@@ -257,22 +257,22 @@ exit 0
     );
 
     const result = await client.callTool(
-      { name: 'keychain_status', arguments: {} },
+      { name: 'get_rundeck_credential', arguments: {} },
       undefined,
       { timeout: 30_000 },
     );
-    const status = (result.structuredContent ?? {}) as {
-      status?: { status?: string };
-    };
-    assert.equal(status.status?.status, 'locked');
+    assert.equal(
+      (result.structuredContent as { value: string } | undefined)?.value,
+      'warm-password',
+    );
     const unlocksAfterCall = Number.parseInt(
       await readFile(unlockCounterFile, 'utf8'),
       10,
     );
     assert.equal(
       unlocksAfterCall,
-      0,
-      `expected keychain_status to avoid unlock, got ${unlocksAfterCall}`,
+      1,
+      `expected the first real tool call to trigger exactly one unlock, got ${unlocksAfterCall}`,
     );
   } finally {
     await client.close().catch(() => {});

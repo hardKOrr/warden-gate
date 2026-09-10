@@ -74,7 +74,8 @@ const transport = new StreamableHTTPClientTransport(
 
 await client.connect(transport);
 
-for (const name of ['keychain_status', 'keychain_sync', 'keychain_sdk_version']) {
+// Swap these for whatever tools.yaml declares in your checkout.
+for (const name of ['get_rundeck_credential', 'get_proxmox_api_token']) {
   const res = await client.callTool(
     { name, arguments: {} },
     undefined,
@@ -132,9 +133,12 @@ The script:
 
 1. starts an isolated `opencode serve`
 2. configures only one local MCP server (`warden`)
-3. calls `keychain_status`
-4. calls `keychain_get_username` for the configured lookup term
-5. prints the raw `opencode run --format json` output for inspection
+3. calls a configured lookup term against one `tools.yaml` tool
+
+**Known gap:** this script and `src/integration/mcp.e2e.integration.test.ts`
+still call pre-fork `keychain_*` tool names and need updating to whatever
+`tools.yaml` declares before they'll pass again; both require live
+Vaultwarden/Docker to verify and were not exercised while building this fork.
 
 ## Expectations
 

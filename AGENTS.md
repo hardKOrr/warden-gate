@@ -1,7 +1,9 @@
 # Repository Guidelines
 
-Streamable HTTP MCP server for Vaultwarden/Bitwarden, backed by the official
-Bitwarden CLI (`bw`).
+Credential-gate MCP server backed by Vaultwarden via the official Bitwarden
+CLI (`bw`). Fork of icoretech/warden-mcp; exposes only the scoped tools
+declared in `tools.yaml`, never a generic vault-fetch tool. Ships stdio-only
+in this fork — see [README.md](README.md).
 
 ## Quick Reference
 

@@ -1,10 +1,10 @@
 # Security Policy
 
-## Reporting a Vulnerability
+This is a private, personal-homelab fork of `icoretech/warden-mcp` and is not
+independently monitored for public vulnerability reports. For issues in code
+inherited from upstream, check whether `icoretech/warden-mcp` already fixed
+it before filing anything here.
 
-Please do **not** open a public GitHub issue for security vulnerabilities.
-
-Report security issues privately via GitHub's security advisory feature:
-https://github.com/icoretech/warden-mcp/security/advisories/new
-
-We will respond within 72 hours and coordinate a fix and disclosure timeline with you.
+For anything specific to this fork (`src/config/toolsConfig.ts`,
+`src/tools/registerScopedTools.ts`, `src/tools/mintHandlers/`), open a private
+issue against `hardKOrr/warden-gate` directly rather than a public one.

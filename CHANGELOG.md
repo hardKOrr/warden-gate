@@ -1,5 +1,14 @@
 # Changelog
 
+## warden-gate fork (2026-09-09)
+
+Forked from `icoretech/warden-mcp` at v0.2.36 and reset to 0.1.0. The generic
+vault-proxy tool surface was removed entirely and replaced with the
+`tools.yaml`-driven scoped tool layer (`src/config/toolsConfig.ts`,
+`src/tools/registerScopedTools.ts`, `src/tools/mintHandlers/`). History below
+this point is upstream's, kept for provenance; release-please automation
+below is inherited but not actively used in this private fork.
+
 ## [0.2.36](https://github.com/icoretech/warden-mcp/compare/v0.2.35...v0.2.36) (2026-09-02)
 
 

@@ -9,14 +9,16 @@ import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import express from 'express';
 import { bwEnvFromHeadersOrEnv } from '../bw/bwHeaders.js';
 import { BwSessionPool } from '../bw/bwPool.js';
+import {
+  loadToolsConfig,
+  resolveToolsConfigPath,
+} from '../config/toolsConfig.js';
 import { KeychainSdk } from '../sdk/keychainSdk.js';
-import { registerTools } from '../tools/registerTools.js';
+import { registerScopedTools } from '../tools/registerScopedTools.js';
 import { SERVER_VERSION } from '../version.js';
 
 export interface CreateKeychainAppOptions {
   appName?: string;
-  toolPrefix?: string;
-  toolSeparator?: string;
   bwHomeRoot?: string;
   sessionTtlMs?: number;
   sessionMaxCount?: number;
@@ -46,11 +48,9 @@ export function createKeychainApp(opts: CreateKeychainAppOptions = {}) {
     const parsed = Number.parseInt(raw ?? '', 10);
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
   };
-  const TOOL_PREFIX = opts.toolPrefix ?? process.env.TOOL_PREFIX ?? 'keychain';
-  const TOOL_SEPARATOR =
-    opts.toolSeparator ?? process.env.TOOL_SEPARATOR ?? '_';
   const APP_NAME =
-    opts.appName ?? process.env.MCP_APP_NAME ?? `${TOOL_PREFIX}-mcp`;
+    opts.appName ?? process.env.MCP_APP_NAME ?? 'warden-gate-mcp';
+  const toolsConfig = loadToolsConfig(resolveToolsConfigPath());
   const sessionTtlMs =
     opts.sessionTtlMs ??
     parsePositiveInt(process.env.KEYCHAIN_SESSION_TTL_MS, 15 * 60 * 1000);
@@ -89,7 +89,8 @@ export function createKeychainApp(opts: CreateKeychainAppOptions = {}) {
 
   function createMcpServer() {
     const server = new McpServer({ name: APP_NAME, version: SERVER_VERSION });
-    registerTools(server, {
+    registerScopedTools(server, {
+      config: toolsConfig,
       getSdk: async (authInfo?: AuthInfo) => {
         const extra = authInfo?.extra as Record<string, unknown> | undefined;
         const bwEnvFromHeader = extra?.bwEnv;
@@ -101,8 +102,6 @@ export function createKeychainApp(opts: CreateKeychainAppOptions = {}) {
           'Missing Bitwarden config headers. Provide X-BW-Host, X-BW-Password, and either (X-BW-ClientId + X-BW-ClientSecret) or X-BW-User.',
         );
       },
-      toolPrefix: TOOL_PREFIX,
-      toolSeparator: TOOL_SEPARATOR,
     });
     return server;
   }

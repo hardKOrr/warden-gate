@@ -1,0 +1,32 @@
+# Scoped tool definitions for warden-gate.
+#
+# Each entry under `tools:` becomes exactly one MCP tool name. Nothing else is
+# reachable through this server — there is no generic "fetch any vault item"
+# tool. Item ids and field names below are not secrets; only the values they
+# point to inside Vaultwarden are. Rotating a credential means changing the
+# item in Vaultwarden — this file never needs to change for a rotation.
+#
+# mode: raw_field
+#   Returns one named field from one named vault item, verbatim. Last resort:
+#   use this only when the target system has no way to mint a short-lived or
+#   scoped credential of its own.
+#   Required: item, field (one of: password, username, notes, uri, or any
+#   custom field name defined on the item).
+#
+# mode: mint_<something>
+#   Fetches the root credential from `item` internally (never returned to the
+#   caller) and exchanges it for a short-lived, scoped credential by calling
+#   the target system's own API. Add a new mode by adding one file under
+#   src/tools/mintHandlers/ and registering it in
+#   src/tools/mintHandlers/index.ts.
+#   Required: item. The handler decides what else it needs from that item.
+
+tools:
+  get_rundeck_credential:
+    item: rundeck-service-account
+    mode: raw_field
+    field: password
+
+  get_proxmox_api_token:
+    item: proxmox-automation-root
+    mode: mint_proxmox_token

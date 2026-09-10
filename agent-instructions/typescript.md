@@ -9,10 +9,11 @@ Use these rules for any TypeScript implementation in this repository.
 - TypeScript uses ESM
 - Keep 2-space indentation and 80-column wrapping consistent with Biome
 - Avoid `any` and non-null assertions
-- Keep tool names stable via `TOOL_PREFIX` (default `keychain`) and `TOOL_SEPARATOR` (default `_`)
+- Tool names come directly from `tools.yaml` keys — no prefix/separator layer
 
 ## Naming
 
-- Match existing `keychain_*` tool naming in `registerTools.ts`
+- Name tools.yaml entries for what they return, e.g. `get_<system>_credential`
+  or `mint_<system>_token`
 - Prefer descriptive input and result shapes over opaque tuples or positional
   arrays

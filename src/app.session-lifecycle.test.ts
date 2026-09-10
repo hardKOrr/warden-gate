@@ -384,7 +384,7 @@ test('tool call without BW credentials returns error', async () => {
         jsonrpc: '2.0',
         id: 2,
         method: 'tools/call',
-        params: { name: 'keychain_status', arguments: {} },
+        params: { name: 'get_rundeck_credential', arguments: {} },
       }),
     });
     assert.equal(res.status, 200);

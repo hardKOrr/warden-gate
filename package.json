@@ -1,10 +1,10 @@
 {
-  "private": false,
-  "name": "@icoretech/warden-mcp",
-  "version": "0.2.36",
+  "private": true,
+  "name": "warden-gate",
+  "version": "0.1.0",
   "type": "module",
   "license": "MIT",
-  "description": "Vaultwarden/Bitwarden MCP server backed by Bitwarden CLI (bw).",
+  "description": "Credential-gate MCP server: exposes only scoped, purpose-specific tools backed by Vaultwarden, never a generic vault-fetch tool. Fork of @icoretech/warden-mcp.",
   "keywords": [
     "mcp",
     "model-context-protocol",
@@ -12,19 +12,19 @@
     "vaultwarden",
     "password-manager",
     "secrets",
-    "automation",
-    "sse"
+    "credential-broker",
+    "automation"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/icoretech/warden-mcp.git"
+    "url": "git+https://github.com/hardKOrr/warden-gate.git"
   },
-  "homepage": "https://github.com/icoretech/warden-mcp#readme",
+  "homepage": "https://github.com/hardKOrr/warden-gate#readme",
   "bugs": {
-    "url": "https://github.com/icoretech/warden-mcp/issues"
+    "url": "https://github.com/hardKOrr/warden-gate/issues"
   },
   "bin": {
-    "warden-mcp": "bin/warden-mcp.js"
+    "warden-gate": "bin/warden-mcp.js"
   },
   "files": [
     "dist/",
@@ -60,10 +60,6 @@
     "playwright": "1.63.0",
     "tsx": "^4.23.13",
     "typescript": "^7.0.2"
-  },
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
   },
   "engines": {
     "node": "~22",
