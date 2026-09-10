@@ -75,7 +75,7 @@ const transport = new StreamableHTTPClientTransport(
 await client.connect(transport);
 
 // Swap these for whatever tools.yaml declares in your checkout.
-for (const name of ['get_rundeck_credential', 'get_proxmox_api_token']) {
+for (const name of ['get_proxmox_api_token', 'get_runner_ssh_key']) {
   const res = await client.callTool(
     { name, arguments: {} },
     undefined,
