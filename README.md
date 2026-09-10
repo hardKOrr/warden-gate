@@ -55,35 +55,55 @@ npm run build
 ```
 
 Edit `tools.yaml` to declare the tools you want exposed (see comments in that
-file), then run:
+file).
+
+### Setting credentials
+
+Don't put `BW_*` values directly in an MCP host's own config (`claude mcp
+add-json ... --env`, `codex mcp add --env`) — those land in that tool's own
+config file (`~/.claude.json`, `~/.codex/config.toml`) in plaintext, and
+you'd have a separate copy to update per tool. Instead, put them in one
+gitignored file next to the code that reads them, and point every MCP host at
+the same launcher script:
 
 ```bash
-BW_HOST=https://vaultwarden.example.com \
-BW_CLIENTID=user.xxxxx \
-BW_CLIENTSECRET=xxxxx \
-BW_PASSWORD='your-master-password' \
-node bin/warden-mcp.js --stdio
+cat > .env.local <<'EOF'
+BW_HOST=https://vaultwarden.example.com
+BW_CLIENTID=user.xxxxx
+BW_CLIENTSECRET=xxxxx
+BW_PASSWORD=your-master-password
+EOF
+chmod 600 .env.local
 ```
 
-Username login also works (`BW_USER` instead of `BW_CLIENTID`/`BW_CLIENTSECRET`).
+`.env.local` is covered by `.gitignore`'s `.env.*` pattern, so it's never
+committed and never counts as drift for the `agent-contract` installer that
+clones this repo. `run-stdio.sh` sources it and execs the server; run it
+directly to sanity-check before wiring up an MCP host:
+
+```bash
+./run-stdio.sh
+```
+
+(Username login also works: set `BW_USER` instead of
+`BW_CLIENTID`/`BW_CLIENTSECRET` in `.env.local`.)
 
 ## Install In MCP Hosts
+
+Both hosts below run the same `run-stdio.sh`, so there's exactly one place to
+update if this server's own Vaultwarden login ever changes — separate from
+target-credential rotation (Proxmox, etc.), which never touches this at all.
 
 ### Claude Code
 
 ```bash
-claude mcp add-json warden-gate '{"command":"node","args":["/absolute/path/to/warden-gate/bin/warden-mcp.js","--stdio"],"env":{"BW_HOST":"https://vaultwarden.example.com","BW_CLIENTID":"user.xxxxx","BW_CLIENTSECRET":"xxxxx","BW_PASSWORD":"your-master-password"}}'
+claude mcp add-json warden-gate '{"command":"/absolute/path/to/warden-gate/run-stdio.sh"}'
 ```
 
 ### Codex
 
 ```bash
-codex mcp add warden-gate \
-  --env BW_HOST=https://vaultwarden.example.com \
-  --env BW_CLIENTID=user.xxxxx \
-  --env BW_CLIENTSECRET=xxxxx \
-  --env BW_PASSWORD='your-master-password' \
-  -- node /absolute/path/to/warden-gate/bin/warden-mcp.js --stdio
+codex mcp add warden-gate -- /absolute/path/to/warden-gate/run-stdio.sh
 ```
 
 ### Ollama (via an MCP bridge)
@@ -91,7 +111,7 @@ codex mcp add warden-gate \
 Ollama has no native MCP client; use a bridge such as
 [`mcp-client-for-ollama`](https://github.com/jonigl/mcp-client-for-ollama),
 which speaks stdio the same way Claude Code and Codex do above — point it at
-the same `node bin/warden-mcp.js --stdio` command and env.
+the same `run-stdio.sh`.
 
 ## How It Works
 
