@@ -28,4 +28,10 @@ set -a
 . "$DIR/.env.local"
 set +a
 
+# tools.yaml resolves relative to the server's cwd, not this script's own
+# directory, when TOOLS_CONFIG_PATH is unset — and an MCP host is not
+# guaranteed to cd here before spawning this script (Claude Code doesn't).
+# Pin it explicitly so this works regardless of the caller's cwd.
+export TOOLS_CONFIG_PATH="${TOOLS_CONFIG_PATH:-$DIR/tools.yaml}"
+
 exec node "$DIR/bin/warden-mcp.js" --stdio
